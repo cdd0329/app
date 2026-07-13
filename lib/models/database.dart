@@ -47,6 +47,7 @@ class AppDatabase {
         'confidence': o.confidence,
         'bbox': o.bbox,
       }).toList()),
+      'image_path': r.imagePath,
     });
   }
 

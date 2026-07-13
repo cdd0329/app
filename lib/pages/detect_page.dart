@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
-import 'package:camera/camera.dart';
 import '../models/detection_record.dart';
 import '../models/database.dart';
 
@@ -26,59 +25,13 @@ class _DetectPageState extends State<DetectPage> {
   double _conf = 0.25;
   String? _dbg;
 
-  bool _camOn = false;
-  CameraController? _camCtrl;
-  List<_Det> _live = [];
-  Timer? _timer;
-  int _lW = 640, _lH = 480;
-
   bool _enh = false;
   double _sc = 1, _cr = 1, _rt = 0;
   double _br = 0, _ct = 0, _st = 1;
   String _mdl = 'COCO (80类)';
 
-  @override void initState() { super.initState(); _initC(); }
-  @override void dispose() { _timer?.cancel(); _camCtrl?.dispose(); super.dispose(); }
-
-  Future<void> _initC() async {
-    try { final cs = await availableCameras(); if (cs.isNotEmpty) { _camCtrl = CameraController(cs.first, ResolutionPreset.medium); await _camCtrl!.initialize(); } } catch (_) {}
-  }
-
-  void _enterC() {
-    if (_camCtrl == null || !_camCtrl!.value.isInitialized) return;
-    setState(() => _camOn = true);
-    _timer = Timer.periodic(const Duration(milliseconds: 800), (_) async {
-      if (!_camOn || _camCtrl == null) return;
-      try {
-        final p = await _camCtrl!.takePicture();
-        final b = await p.readAsBytes();
-        final d = await _send(b);
-        if (mounted && _camOn) setState(() => _live = d);
-      } catch (_) {}
-    });
-  }
-
-  void _exitC() { _timer?.cancel(); setState(() { _camOn = false; _live = []; }); }
-
-  Future<List<_Det>> _send(Uint8List b) async {
-    try {
-      var u = Uri.parse('$_serverUrl/api/detect');
-      var r = http.MultipartRequest('POST', u);
-      r.fields['conf'] = '0.25';
-      r.fields['model'] = _mdl.contains('VOC') ? 'voc' : 'coco';
-      r.files.add(http.MultipartFile.fromBytes('file', b, filename: 'f.jpg'));
-      var resp = await http.Response.fromStream(await r.send()).timeout(const Duration(seconds: 3));
-      if (resp.statusCode != 200) return [];
-      var data = jsonDecode(resp.body);
-      _lW = (data['width'] as int?) ?? 640;
-      _lH = (data['height'] as int?) ?? 480;
-      return (data['objects'] as List?)?.map((o) {
-        var bb = o['bbox'] as List;
-        return _Det(bb[0].toDouble(), bb[1].toDouble(), bb[2].toDouble(), bb[3].toDouble(),
-            (o['confidence'] as num).toDouble(), o['class'] as String);
-      }).toList() ?? [];
-    } catch (_) { return []; }
-  }
+  @override void initState() { super.initState(); }
+  @override void dispose() { super.dispose(); }
 
   Future<void> _pick(ImageSource s) async {
     if (_busy) return;
@@ -131,70 +84,74 @@ class _DetectPageState extends State<DetectPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (_camOn) return _camView(context);
-    return _imgView(context);
-  }
-
-  Widget _camView(BuildContext ctx) {
-    if (_camCtrl == null || !_camCtrl!.value.isInitialized) {
-      return Scaffold(appBar: AppBar(title: const Text('实时检测')), body: const Center(child: CircularProgressIndicator()));
-    }
-    return Scaffold(
-      appBar: AppBar(title: const Text('实时检测'), leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _exitC)),
-      body: Stack(children: [
-        Positioned.fill(child: CameraPreview(_camCtrl!)),
-        Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble())))),
-        Positioned(top: 12, left: 12, child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
-          child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
-      ]),
-    );
-  }
-
-  Widget _imgView(BuildContext context) {
     var t = Theme.of(context); var has = _rawBytes != null;
     return Scaffold(
       appBar: AppBar(title: const Text('灵眸'), actions: [
         Padding(padding: const EdgeInsets.only(right: 12), child: _mdlBtn()),
       ]),
-      body: Column(children: [
-        if (_busy) const LinearProgressIndicator(minHeight: 2),
-        Expanded(flex: 3, child: Container(
-          margin: const EdgeInsets.all(16).copyWith(bottom: 8),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
-          child: has ? ClipRRect(borderRadius: BorderRadius.circular(12), child: Center(child: Stack(children: [
-            _imgPrev(),
-            if (_dets.isNotEmpty) Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_dets, _imgW.toDouble(), _imgH.toDouble())))),
-          ]))) : Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(Icons.image_outlined, size: 64, color: Colors.grey.shade300),
-            const SizedBox(height: 12), Text('选择图片开始检测', style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(children: [
+          if (_busy) const LinearProgressIndicator(minHeight: 2),
+
+          // 图片 — 自适应高度
+          if (has)
+            Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 0), child: AspectRatio(
+              aspectRatio: _imgW / (_imgH > 0 ? _imgH : 640),
+              child: Container(
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
+                child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Stack(children: [
+                  _imgPrev(),
+                  if (_dets.isNotEmpty) Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_dets, _imgW.toDouble(), _imgH.toDouble())))),
+                ])),
+              ),
+            )),
+
+          // 空状态
+          if (!has) Container(
+            margin: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
+            child: Center(child: Padding(padding: const EdgeInsets.symmetric(vertical: 80), child: Column(children: [
+              Icon(Icons.image_outlined, size: 64, color: Colors.grey.shade300),
+              const SizedBox(height: 12), Text('选择图片开始检测', style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
+            ])))),
+
+          if (has) _enhPanel(t),
+
+          if (has) Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Row(children: [
+            Text('置信度', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            Expanded(child: Slider(value: _conf, min: 0.05, max: 0.95, activeColor: t.colorScheme.primary, onChanged: (v) => setState(() => _conf = v))),
+            Text(_conf.toStringAsFixed(2), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.colorScheme.primary)),
           ])),
-        )),
 
-        if (has) _enhPanel(t),
+          if (has) Padding(padding: const EdgeInsets.fromLTRB(16, 6, 16, 0), child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Text('检测结果', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: t.colorScheme.onSurface)),
+                if (_dets.isNotEmpty) Padding(padding: const EdgeInsets.only(left: 8), child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: t.colorScheme.primary, borderRadius: BorderRadius.circular(8)),
+                  child: Text('${_dets.length}', style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600)))),
+              ]),
+              const SizedBox(height: 6),
+              if (_dets.isEmpty) Center(child: Text(_hasRun ? '未检测到目标' : '', style: TextStyle(color: Colors.grey.shade500))),
+              if (_dets.isNotEmpty) ..._dets.asMap().entries.map((e) {
+                int i = e.key; var d = e.value;
+                var cs = [Colors.red, Colors.green, Colors.blue, Colors.orange, Colors.purple, Colors.teal, Colors.pink, Colors.indigo]; var c = cs[i % cs.length];
+                return Column(children: [
+                  if (i > 0) const Divider(height: 1),
+                  ListTile(dense: true, leading: Container(width: 12, height: 12, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+                    title: Text(d.label, style: const TextStyle(fontSize: 14)),
+                    trailing: Text('${(d.score * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c))),
+                ]);
+              }),
+            ]),
+          )),
 
-        Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 0), child: Row(children: [
-          Text('置信度', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-          Expanded(child: Slider(value: _conf, min: 0.05, max: 0.95, activeColor: t.colorScheme.primary, onChanged: (v) => setState(() => _conf = v))),
-          Text(_conf.toStringAsFixed(2), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.colorScheme.primary)),
-        ])),
-
-        Expanded(flex: 2, child: Container(
-          margin: const EdgeInsets.fromLTRB(16, 4, 16, 0), padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
-          child: _dets.isEmpty
-              ? Center(child: Text(_hasRun ? '未检测到目标' : '', style: TextStyle(color: Colors.grey.shade500)))
-              : ListView.separated(itemCount: _dets.length, separatorBuilder: (_, _) => const Divider(height: 1), itemBuilder: (_, i) {
-                  var d = _dets[i]; var cs = [Colors.red, Colors.green, Colors.blue, Colors.orange, Colors.purple, Colors.teal, Colors.pink, Colors.indigo]; var c = cs[i % cs.length];
-                  return ListTile(dense: true, leading: Container(width: 12, height: 12, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
-                      title: Text(d.label, style: const TextStyle(fontSize: 14)),
-                      trailing: Text('${(d.score * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c)));
-                }),
-        )),
-
-        _btnRow(has),
-      ]),
+          _btnRow(has),
+        ]),
+      ),
     );
   }
 
@@ -203,8 +160,6 @@ class _DetectPageState extends State<DetectPage> {
       _obtn(Icons.photo_library_outlined, '相册', () => _pick(ImageSource.gallery)),
       const SizedBox(width: 8),
       _obtn(Icons.camera_alt_outlined, '拍照', () => _pick(ImageSource.camera)),
-      const SizedBox(width: 8),
-      _obtn(Icons.videocam_outlined, '实时', _enterC),
       const SizedBox(width: 8),
       Expanded(flex: 2, child: FilledButton.icon(
         onPressed: (has && !_busy) ? _detect : null, icon: const Icon(Icons.search, size: 18),

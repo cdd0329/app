@@ -160,63 +160,58 @@ class _DetailPageState extends State<_DetailPage> {
     final cs = [Colors.red,Colors.green,Colors.blue,Colors.orange,Colors.purple,Colors.teal,Colors.pink,Colors.indigo];
     return Scaffold(
       appBar: AppBar(title: Text(widget.record.imageName)),
-      body: Column(children: [
-        Container(
-          width: double.infinity, padding: const EdgeInsets.all(16), color: const Color(0xFFF5F7FA),
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-            _stat('目标', '${widget.record.count}', Theme.of(context).colorScheme.primary),
-            _stat('耗时', '${widget.record.processMs}ms', Theme.of(context).colorScheme.primary),
-            _stat('时间', widget.record.uploadedAt.length >= 16 ? widget.record.uploadedAt.substring(0, 16) : widget.record.uploadedAt, Theme.of(context).colorScheme.primary),
-          ]),
-        ),
-        if (_imgBytes != null)
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.only(bottom: 24),
+        child: Column(children: [
           Container(
-            margin: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE8ECF1))),
-            child: ClipRRect(borderRadius: BorderRadius.circular(12),
-              child: SizedBox(
-                width: double.infinity,
-                height: 240,
-                child: Center(child: Stack(children: [
-                  Image.memory(_imgBytes!, fit: BoxFit.contain, width: double.infinity, height: 240),
+            width: double.infinity, padding: const EdgeInsets.all(16), color: const Color(0xFFF5F7FA),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+              _stat('目标', '${widget.record.count}', Theme.of(context).colorScheme.primary),
+              _stat('耗时', '${widget.record.processMs}ms', Theme.of(context).colorScheme.primary),
+              _stat('时间', widget.record.uploadedAt.length >= 16 ? widget.record.uploadedAt.substring(0, 16) : widget.record.uploadedAt, Theme.of(context).colorScheme.primary),
+            ]),
+          ),
+          if (_imgBytes != null)
+            Padding(padding: const EdgeInsets.all(12), child: AspectRatio(
+              aspectRatio: _imgW.toDouble() / (_imgH > 0 ? _imgH.toDouble() : 640),
+              child: Container(
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
+                child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Stack(children: [
+                  Image.memory(_imgBytes!, fit: BoxFit.contain),
                   if (widget.record.objects.isNotEmpty)
-                    CustomPaint(
-                      size: Size(_imgW.toDouble(), _imgH.toDouble()),
-                      painter: _HistBoxPaint(widget.record.objects, _imgW.toDouble(), _imgH.toDouble()),
-                    ),
+                    Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _HistBoxPaint(widget.record.objects, _imgW.toDouble(), _imgH.toDouble())))),
                 ])),
               ),
-            ),
-          ),
-        Expanded(child: widget.record.objects.isEmpty
-            ? const Center(child: Text('无检测数据'))
-            : ListView.separated(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                itemCount: widget.record.objects.length,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final o = widget.record.objects[i];
-                  final c = cs[i % cs.length];
+            )),
+          if (widget.record.objects.isNotEmpty)
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('检测结果 (${widget.record.count})', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                ...widget.record.objects.asMap().entries.map((e) {
+                  int i = e.key; final o = e.value; final c = cs[i % cs.length];
                   return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8),
-                        border: Border(left: BorderSide(color: c, width: 3))),
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: i > 0 ? const BoxDecoration(border: Border(top: BorderSide(color: Color(0xFFE8ECF1)))) : null,
                     child: Row(children: [
                       Container(width: 10, height: 10, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
                       const SizedBox(width: 10),
                       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text(o.className, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-                        const SizedBox(height: 2),
-                        Text('bbox: ${o.bbox.map((e) => e.toInt()).join(', ')}', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                        Text('bbox: ${o.bbox.map((ev) => ev.toInt()).join(', ')}', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
                       ])),
                       Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(color: c.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
                           child: Text('${(o.confidence*100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: c))),
                     ]),
                   );
-                })),
-      ]),
+                }),
+              ]),
+            )),
+        ]),
+      ),
     );
   }
 }
