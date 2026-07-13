@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/detection_record.dart';
 import '../models/database.dart';
@@ -140,19 +141,24 @@ class _DetailPage extends StatefulWidget {
 
 class _DetailPageState extends State<_DetailPage> {
   Uint8List? _imgBytes;
-  int _imgW = 640, _imgH = 640;
+  int _imgW = 640, _imgH = 480;
 
   @override
   void initState() {
     super.initState();
-    if (widget.record.imagePath != null) {
-      try {
-        final file = File(widget.record.imagePath!);
-        if (file.existsSync()) {
-          _imgBytes = file.readAsBytesSync();
-        }
-      } catch (_) {}
-    }
+    _loadImage();
+  }
+
+  Future<void> _loadImage() async {
+    if (widget.record.imagePath == null) return;
+    try {
+      final file = File(widget.record.imagePath!);
+      if (!file.existsSync()) return;
+      final bytes = file.readAsBytesSync();
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      if (mounted) setState(() { _imgBytes = bytes; _imgW = frame.image.width; _imgH = frame.image.height; });
+    } catch (_) {}
   }
 
   @override
