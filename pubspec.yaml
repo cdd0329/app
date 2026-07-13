@@ -40,6 +40,8 @@ dependencies:
   path: ^1.9.1
   http: ^1.6.0
   http_parser: ^4.1.2
+  ultralytics_yolo:
+    path: E:/obj_detection/yolo-flutter-app
 dev_dependencies:
   flutter_test:
     sdk: flutter
