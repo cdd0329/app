@@ -34,7 +34,7 @@ class _DetectPageState extends State<DetectPage> {
   bool _enh = false;
   double _sc = 1, _cr = 1, _rt = 0;
   double _br = 0, _ct = 0, _st = 1;
-  String _mdl = 'COCO (80类)';
+  String _mdl = 'VOC (20类)';
   bool _uploaded = false; // 是否已上传，防止重复
   bool _uploading = false;
 
@@ -516,14 +516,17 @@ class _DetectPageState extends State<DetectPage> {
     }
     return Scaffold(
       appBar: AppBar(title: const Text('实时检测'), leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _exitC)),
-      body: Stack(children: [
-        Positioned.fill(child: CameraPreview(_camCtrl!)),
-        Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble())))),
-        Positioned(top: 12, left: 12, child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
-          child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
-      ]),
+      body: Center(child: AspectRatio(
+        aspectRatio: _camCtrl!.value.aspectRatio,
+        child: Stack(children: [
+          CameraPreview(_camCtrl!),
+          IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble()))),
+          Positioned(top: 12, left: 12, child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+            child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
+        ]),
+      )),
     );
   }
 
