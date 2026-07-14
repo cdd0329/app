@@ -41,7 +41,6 @@ class _DetectPageState extends State<DetectPage> {
   bool _camOn = false;
   CameraController? _camCtrl;
   List<_Det> _live = [];
-  Uint8List? _liveFrame;
   Timer? _timer;
   int _lW = 640, _lH = 480;
 
@@ -149,12 +148,12 @@ class _DetectPageState extends State<DetectPage> {
         final p = await _camCtrl!.takePicture();
         final b = await p.readAsBytes();
         final d = await _send(b);
-        if (mounted && _camOn) setState(() { _live = d; _liveFrame = b; });
+        if (mounted && _camOn) setState(() => _live = d);
       } catch (_) {}
     });
   }
 
-  void _exitC() { _timer?.cancel(); setState(() { _camOn = false; _live = []; _liveFrame = null; }); }
+  void _exitC() { _timer?.cancel(); setState(() { _camOn = false; _live = []; }); }
 
   void _editClass(int idx) {
     var d = _dets[idx];
@@ -515,63 +514,15 @@ class _DetectPageState extends State<DetectPage> {
     if (_camCtrl == null || !_camCtrl!.value.isInitialized) {
       return Scaffold(appBar: AppBar(title: const Text('实时检测')), body: const Center(child: CircularProgressIndicator()));
     }
-    // 有检测结果时：显示拍照帧+画框（和相册模式完全相同的渲染，框一定准）
-    var hasLive = _live.isNotEmpty || _liveFrame != null;
     return Scaffold(
       appBar: AppBar(title: const Text('实时检测'), leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _exitC)),
-      body: hasLive && _liveFrame != null
-          ? _buildLiveResult()
-          : Stack(children: [
-              Positioned.fill(child: CameraPreview(_camCtrl!)),
-              Center(child: Text('实时检测中...', style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.8)))),
-            ]),
-    );
-  }
-
-  Widget _buildLiveResult() {
-    return SingleChildScrollView(
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: AspectRatio(
-            aspectRatio: _lW / (_lH > 0 ? _lH : 480),
-            child: Container(
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(children: [
-                  Image.memory(_liveFrame!, fit: BoxFit.contain),
-                  if (_live.isNotEmpty)
-                    Positioned.fill(child: IgnorePointer(child: CustomPaint(
-                      painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble())))),
-                ]),
-              ),
-            ),
-          ),
-        ),
-        // 检测目标列表
-        if (_live.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('${_live.length} 目标', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 6),
-                ..._live.asMap().entries.map((e) {
-                  int i = e.key; var d = e.value;
-                  var cs = [Colors.red,Colors.green,Colors.blue,Colors.orange,Colors.purple,Colors.teal,Colors.pink,Colors.indigo];
-                  var c = cs[i % cs.length];
-                  return ListTile(dense: true, leading: Container(width: 12, height: 12, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
-                    title: Text(d.label, style: const TextStyle(fontSize: 14)),
-                    trailing: Text('${(d.score * 100).toStringAsFixed(0)}%',
-                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c)));
-                }),
-              ]),
-            ),
-          ),
-        const SizedBox(height: 80),
+      body: Stack(children: [
+        Positioned.fill(child: CameraPreview(_camCtrl!)),
+        Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble())))),
+        Positioned(top: 12, left: 12, child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+          child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
       ]),
     );
   }
@@ -679,38 +630,4 @@ class _BoxP extends CustomPainter {
     }
   }
   @override bool shouldRepaint(covariant CustomPainter o) => true;
-}
-
-/// 实时画框：CameraPreview 填满屏幕，按 fill 策略映射坐标
-class _LiveBoxP extends CustomPainter {
-  final List<_Det> dets;
-  final double iW, iH;
-  _LiveBoxP(this.dets, this.iW, this.iH, this.vW, this.vH);
-  final double vW, vH;
-
-  @override
-  void paint(Canvas c, Size s) {
-    if (iW <= 0 || iH <= 0 || vW <= 0 || vH <= 0) return;
-    // CameraPreview 填满屏幕 → fill 策略
-    var sc = vW / iW > vH / iH ? vW / iW : vH / iH;
-    var ox = (vW - iW * sc) / 2;
-    var oy = (vH - iH * sc) / 2;
-    var cs = [Colors.red,Colors.green,Colors.blue,Colors.orange,Colors.purple,Colors.teal,Colors.pink,Colors.indigo];
-    for (var i = 0; i < dets.length; i++) {
-      var d = dets[i]; var col = cs[i%cs.length];
-      var x1 = ox + d.x1 * sc;
-      var y1 = oy + d.y1 * sc;
-      var x2 = ox + d.x2 * sc;
-      var y2 = oy + d.y2 * sc;
-      var r = Rect.fromLTRB(x1, y1, x2, y2);
-      c.drawRect(r, Paint()..color=col..style=PaintingStyle.stroke..strokeWidth=2.5);
-      var lb = '${d.label} ${(d.score*100).toStringAsFixed(0)}%';
-      var tp = TextPainter(text: TextSpan(text: lb, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)), textDirection: TextDirection.ltr)..layout();
-      c.drawRect(Rect.fromLTWH(r.left, r.top, tp.width+8, 22), Paint()..color=col);
-      tp.paint(c, Offset(r.left+4, r.top+2));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter o) => true;
 }
