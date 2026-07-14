@@ -516,17 +516,14 @@ class _DetectPageState extends State<DetectPage> {
     }
     return Scaffold(
       appBar: AppBar(title: const Text('实时检测'), leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _exitC)),
-      body: Center(child: AspectRatio(
-        aspectRatio: _camCtrl!.value.aspectRatio,
-        child: Stack(children: [
-          CameraPreview(_camCtrl!),
-          IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble()))),
-          Positioned(top: 12, left: 12, child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
-            child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
-        ]),
-      )),
+      body: Stack(children: [
+        Positioned.fill(child: CameraPreview(_camCtrl!)),
+        Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble())))),
+        Positioned(top: 12, left: 12, child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+          child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
+      ]),
     );
   }
 
