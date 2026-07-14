@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
 import 'package:share_plus/share_plus.dart';
+import 'package:ultralytics_yolo/yolo.dart';
 import 'batch_page.dart';
 import '../utils/export_helper.dart';
 import '../utils/class_maps.dart';
@@ -35,7 +36,10 @@ class _DetectPageState extends State<DetectPage> {
   double _sc = 1, _cr = 1, _rt = 0;
   double _br = 0, _ct = 0, _st = 1;
   String _mdl = 'VOC (20类)';
-  bool _uploaded = false; // 是否已上传，防止重复
+  bool _useLocal = false;
+  YOLO? _yoloInstance;
+  bool _localReady = false;
+  bool _uploaded = false;
   bool _uploading = false;
 
   bool _camOn = false;
@@ -71,9 +75,20 @@ class _DetectPageState extends State<DetectPage> {
     if (mounted) setState(() { _rawBytes = b; _dets = const []; _hasRun = false; _dbg = null; });
   }
 
+  Future<void> _toggleLocal(bool v) async {
+    if (v && !_localReady) {
+      try {
+        _yoloInstance = YOLO(modelPath: 'assets/coco_model.tflite', task: YOLOTask.detect, useGpu: false);
+        await _yoloInstance!.loadModel();
+        _localReady = true;
+      } catch (e) { setState(() => _useLocal = false); return; }
+    }
+    setState(() => _useLocal = v);
+  }
+
   Future<void> _detect() async {
     if (_rawBytes == null) return;
-    // 将旋转/裁剪应用到原始图片，使后端看到与预览一致的图
+    if (_useLocal) { await _localDetect(); return; }
     var sendBytes = _applyTransform(_rawBytes!);
     setState(() { _busy = true; _dbg = null; });
     var sw = Stopwatch()..start();
@@ -111,6 +126,32 @@ class _DetectPageState extends State<DetectPage> {
       if (mounted) setState(() { _dets = list; _hasRun = true; _busy = false; _uploaded = false;
         _dbg = '${list.length}目标 ${sw.elapsedMilliseconds}ms'; });
     } catch (e) { if (mounted) setState(() { _busy = false; _dbg = '连接失败($e)'; }); }
+  }
+
+  Future<void> _localDetect() async {
+    if (_rawBytes == null || _yoloInstance == null) return;
+    setState(() { _busy = true; _dbg = null; });
+    var sw = Stopwatch()..start();
+    try {
+      var res = await _yoloInstance!.predict(_rawBytes!, confidenceThreshold: _conf);
+      sw.stop();
+      var dets = res['detections'] as List? ?? [];
+      var list = <_Det>[];
+      for (var r in dets) {
+        var m = r as Map;
+        var bb = m['boundingBox'] as Map;
+        list.add(_Det(
+          (bb['left'] as num).toDouble(), (bb['top'] as num).toDouble(),
+          (bb['right'] as num).toDouble(), (bb['bottom'] as num).toDouble(),
+          (m['confidence'] as num).toDouble(), m['className'] as String,
+        ));
+      }
+      if (mounted) setState(() { _dets = list; _hasRun = true; _busy = false; _uploaded = false;
+        _imgW = 640; _imgH = 640;
+        _dbg = '${list.length}目标 ${sw.elapsedMilliseconds}ms (本地)'; });
+    } catch (e) {
+      if (mounted) setState(() { _busy = false; _dbg = '本地推理失败: $e'; });
+    }
   }
 
   void _resetE() { setState(() { _sc = 1; _cr = 1; _rt = 0; _br = 0; _ct = 0; _st = 1; }); }
@@ -411,6 +452,10 @@ class _DetectPageState extends State<DetectPage> {
     var t = Theme.of(context); var has = _rawBytes != null;
     return Scaffold(
       appBar: AppBar(title: const Text('灵眸'), actions: [
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Text('本地', style: TextStyle(fontSize: 11, color: _useLocal ? t.colorScheme.primary : Colors.grey)),
+          Switch(value: _useLocal, onChanged: _toggleLocal, materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
+        ]),
         Padding(padding: const EdgeInsets.only(right: 12), child: _mdlBtn()),
       ]),
       body: SingleChildScrollView(
