@@ -436,7 +436,7 @@ class _DetectPageState extends State<DetectPage> {
             margin: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
             child: Center(child: Padding(padding: const EdgeInsets.symmetric(vertical: 80), child: Column(children: [
               Icon(Icons.image_outlined, size: 64, color: Colors.grey.shade300),
-              const SizedBox(height: 12), Text('选择图片开始检测', style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
+              const SizedBox(height: 12), Text('选择图片进行检测', style: TextStyle(fontSize: 15, color: Colors.grey.shade500)),
             ])))),
 
           if (has) _enhPanel(t),
@@ -499,7 +499,7 @@ class _DetectPageState extends State<DetectPage> {
             ])),
           if (has) Padding(
             padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
-            child: Text('点 ✏️ 修正类别后上传，用于模型增量训练',
+            child: Text('修正类别后上传到服务器，用于模型增量训练',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
           ),
@@ -537,8 +537,8 @@ class _DetectPageState extends State<DetectPage> {
       const SizedBox(width: 8),
       Expanded(child: FilledButton.icon(
         onPressed: (has && !_busy) ? _detect : null, icon: const Icon(Icons.search, size: 16),
-        label: const Text('开始检测', style: TextStyle(fontSize: 13)),
-        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4)))),
+        label: const Text('检测', style: TextStyle(fontSize: 13)),
+        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)))),
     ]));
   }
 
