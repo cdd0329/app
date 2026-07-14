@@ -41,6 +41,7 @@ class _DetectPageState extends State<DetectPage> {
   bool _camOn = false;
   CameraController? _camCtrl;
   List<_Det> _live = [];
+  Uint8List? _liveFrame;
   Timer? _timer;
   int _lW = 640, _lH = 480;
 
@@ -148,12 +149,12 @@ class _DetectPageState extends State<DetectPage> {
         final p = await _camCtrl!.takePicture();
         final b = await p.readAsBytes();
         final d = await _send(b);
-        if (mounted && _camOn) setState(() => _live = d);
+        if (mounted && _camOn) setState(() { _live = d; _liveFrame = b; });
       } catch (_) {}
     });
   }
 
-  void _exitC() { _timer?.cancel(); setState(() { _camOn = false; _live = []; }); }
+  void _exitC() { _timer?.cancel(); setState(() { _camOn = false; _live = []; _liveFrame = null; }); }
 
   void _editClass(int idx) {
     var d = _dets[idx];
@@ -514,22 +515,64 @@ class _DetectPageState extends State<DetectPage> {
     if (_camCtrl == null || !_camCtrl!.value.isInitialized) {
       return Scaffold(appBar: AppBar(title: const Text('实时检测')), body: const Center(child: CircularProgressIndicator()));
     }
+    // 有检测结果时：显示拍照帧+画框（和相册模式完全相同的渲染，框一定准）
+    var hasLive = _live.isNotEmpty || _liveFrame != null;
     return Scaffold(
       appBar: AppBar(title: const Text('实时检测'), leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _exitC)),
-      body: LayoutBuilder(builder: (ctx, constraints) {
-        var sw = constraints.maxWidth;
-        var sh = constraints.maxHeight;
-        // takePicture 拍照尺寸 vs 预览实际尺寸，做拉伸映射
-        return Stack(children: [
-          Positioned.fill(child: CameraPreview(_camCtrl!)),
-          Positioned.fill(child: IgnorePointer(child: CustomPaint(
-            painter: _LiveBoxP(_live, _lW.toDouble(), _lH.toDouble(), sw, sh)))),
-          Positioned(top: 12, left: 12, child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
-            child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
-        ]);
-      }),
+      body: hasLive && _liveFrame != null
+          ? _buildLiveResult()
+          : Stack(children: [
+              Positioned.fill(child: CameraPreview(_camCtrl!)),
+              Center(child: Text('实时检测中...', style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.8)))),
+            ]),
+    );
+  }
+
+  Widget _buildLiveResult() {
+    return SingleChildScrollView(
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: AspectRatio(
+            aspectRatio: _lW / (_lH > 0 ? _lH : 480),
+            child: Container(
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Stack(children: [
+                  Image.memory(_liveFrame!, fit: BoxFit.contain),
+                  if (_live.isNotEmpty)
+                    Positioned.fill(child: IgnorePointer(child: CustomPaint(
+                      painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble())))),
+                ]),
+              ),
+            ),
+          ),
+        ),
+        // 检测目标列表
+        if (_live.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${_live.length} 目标', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 6),
+                ..._live.asMap().entries.map((e) {
+                  int i = e.key; var d = e.value;
+                  var cs = [Colors.red,Colors.green,Colors.blue,Colors.orange,Colors.purple,Colors.teal,Colors.pink,Colors.indigo];
+                  var c = cs[i % cs.length];
+                  return ListTile(dense: true, leading: Container(width: 12, height: 12, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+                    title: Text(d.label, style: const TextStyle(fontSize: 14)),
+                    trailing: Text('${(d.score * 100).toStringAsFixed(0)}%',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c)));
+                }),
+              ]),
+            ),
+          ),
+        const SizedBox(height: 80),
+      ]),
     );
   }
 
