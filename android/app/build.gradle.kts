@@ -17,7 +17,7 @@ android {
     defaultConfig {
         applicationId = "com.objdetect.shujiapp"
         minSdk = flutter.minSdkVersion
-        targetSdk = 34
+        targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         vectorDrawables.useSupportLibrary = true
