@@ -32,7 +32,8 @@ class ExportItem {
 String yoloAnnotation(ExportItem item, {required bool isVoc}) {
   final map = isVoc ? VOC_MAP : COCO_MAP;
   return item.targets.map((t) {
-    final clsId = map[t.label] ?? 0;
+    final clsId = map[t.label];
+    if (clsId == null) throw ArgumentError('未知类别: ${t.label}');
     final xc = ((t.x1 + t.x2) / 2) / item.imgW;
     final yc = ((t.y1 + t.y2) / 2) / item.imgH;
     final w = (t.x2 - t.x1) / item.imgW;

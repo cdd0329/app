@@ -54,26 +54,36 @@ class _BatchPageState extends State<BatchPage> {
   int _done = 0;
   bool _busy = false;
 
+  bool _disposed = false;
+
   @override
   void initState() {
     super.initState();
     _items = [];
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initImages());
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (!_disposed) _initImages(); });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 
   Future<void> _initImages() async {
     var list = <BatchImage>[];
-    for (int i = 0; i < widget.files.length && i < 9; i++) {
+    for (int i = 0; i < widget.files.length; i++) {
       var bytes = await widget.files[i].readAsBytes();
       list.add(BatchImage(name: widget.files[i].name.split('.').first, bytes: bytes));
     }
-    setState(() => _items = list);
-    _detectAll();
+    if (!_disposed && mounted) setState(() => _items = list);
+    if (!_disposed) _detectAll();
   }
 
   Future<void> _detectAll() async {
+    if (_disposed || !mounted) return;
     setState(() => _busy = true);
     for (int i = 0; i < _items.length; i++) {
+      if (_disposed) return;
       final item = _items[i];
       final sw = Stopwatch()..start();
       try {
@@ -128,9 +138,9 @@ class _BatchPageState extends State<BatchPage> {
         item.error = '$e';
       }
       item.done = true;
-      setState(() => _done = i + 1);
+      if (!_disposed && mounted) setState(() => _done = i + 1);
     }
-    setState(() => _busy = false);
+    if (!_disposed && mounted) setState(() => _busy = false);
   }
 
   @override
@@ -314,7 +324,8 @@ class _BatchPageState extends State<BatchPage> {
   }
 
   Future<void> _uploadAll(BuildContext ctx) async {
-    var uploadUrl = widget.serverUrl.replaceFirst(':8765', ':8767') + '/api/annotations/upload';
+    var host = Uri.parse(widget.serverUrl).host;
+    var uploadUrl = 'http://$host:8767/api/annotations/upload';
     var ok = 0, fail = 0;
     for (var item in _items) {
       if (item.dets.isEmpty) continue;
@@ -566,8 +577,6 @@ class _BatchDetailPageState extends State<BatchDetailPage> {
                       onTap: () {
                         setState(() => det.label = cls);
                         Navigator.pop(ctx);
-                        // 刷新详情页
-                        setState(() {});
                       },
                     );
                   },

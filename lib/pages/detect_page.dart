@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:camera/camera.dart';
+import 'package:image/image.dart' as img;
 import 'batch_page.dart';
 import '../utils/export_helper.dart';
 import '../utils/class_maps.dart';
@@ -68,6 +69,8 @@ class _DetectPageState extends State<DetectPage> {
 
   Future<void> _detect() async {
     if (_rawBytes == null) return;
+    // 将旋转/裁剪应用到原始图片，使后端看到与预览一致的图
+    var sendBytes = _applyTransform(_rawBytes!);
     setState(() { _busy = true; _dbg = null; });
     var sw = Stopwatch()..start();
     try {
@@ -75,8 +78,8 @@ class _DetectPageState extends State<DetectPage> {
       var r = http.MultipartRequest('POST', u);
       r.fields['conf'] = _conf.toString();
       r.fields['model'] = _mdl.contains('VOC') ? 'voc' : 'coco';
-      r.files.add(http.MultipartFile.fromBytes('file', _rawBytes!, filename: 'img.jpg'));
-      var resp = await http.Response.fromStream(await r.send());
+      r.files.add(http.MultipartFile.fromBytes('file', sendBytes, filename: 'img.jpg'));
+      var resp = await http.Response.fromStream(await r.send()).timeout(const Duration(seconds: 15));
       sw.stop();
       if (resp.statusCode != 200) { if (mounted) setState(() { _busy = false; _dbg = 'HTTP ${resp.statusCode}'; }); return; }
       var data = jsonDecode(resp.body);
@@ -91,6 +94,7 @@ class _DetectPageState extends State<DetectPage> {
       var now = DateTime.now().millisecondsSinceEpoch;
       try {
         var dir = await getApplicationDocumentsDirectory();
+        // 保存原始图（未变换）到历史记录，保留未来调整可能性
         await File('${dir.path}/$now.jpg').writeAsBytes(_rawBytes!);
         await AppDatabase.insertRecord(DetectionRecord(
           id: now, imagePath: '${dir.path}/$now.jpg',
@@ -106,6 +110,26 @@ class _DetectPageState extends State<DetectPage> {
   }
 
   void _resetE() { setState(() { _sc = 1; _cr = 1; _rt = 0; _br = 0; _ct = 0; _st = 1; }); }
+
+  /// 对原始图片应用旋转 + 裁剪变换，使发送到服务器的图与预览一致
+  Uint8List _applyTransform(Uint8List bytes) {
+    if (_rt == 0 && _cr >= 1.0) return bytes;
+    var image = img.decodeImage(bytes);
+    if (image == null) return bytes;
+    // 旋转
+    if (_rt != 0) {
+      image = img.copyRotate(image, angle: _rt.toInt());
+    }
+    // 中心裁剪
+    if (_cr < 1.0) {
+      var cw = (image.width * _cr).toInt();
+      var ch = (image.height * _cr).toInt();
+      var cx = ((image.width - cw) / 2).toInt();
+      var cy = ((image.height - ch) / 2).toInt();
+      image = img.copyCrop(image, x: cx, y: cy, width: cw, height: ch);
+    }
+    return Uint8List.fromList(img.encodeJpg(image));
+  }
 
   Future<void> _initC() async {
     try { final cs = await availableCameras(); if (cs.isNotEmpty) { _camCtrl = CameraController(cs.first, ResolutionPreset.medium); await _camCtrl!.initialize(); } } catch (_) {}
@@ -389,6 +413,10 @@ class _DetectPageState extends State<DetectPage> {
     var sM = <double>[0.3086+0.6914*_st,0.6094-0.6094*_st,0.0820-0.0820*_st,0,0, 0.3086-0.3086*_st,0.6094+0.3906*_st,0.0820-0.0820*_st,0,0, 0.3086-0.3086*_st,0.6094-0.6094*_st,0.0820+0.9180*_st,0,0, 0,0,0,1,0];
     img = ColorFiltered(colorFilter: ColorFilter.matrix(sM), child: img);
     img = ColorFiltered(colorFilter: ColorFilter.matrix(cM), child: img);
+    // 裁剪（视觉预览：中心缩放）
+    if (_cr < 1.0) {
+      img = ClipRect(child: Transform.scale(scale: 1.0 / _cr, alignment: Alignment.center, child: img));
+    }
     return Transform(alignment: Alignment.center, transform: Matrix4.identity()..setEntry(0,0,_sc)..setEntry(1,1,_sc)..setEntry(2,2,_sc)..rotateZ(_rt*math.pi/180), child: img);
   }
 
