@@ -78,7 +78,8 @@ class _DetectPageState extends State<DetectPage> {
   Future<void> _toggleLocal(bool v) async {
     if (v && !_localReady) {
       try {
-        _yoloInstance = YOLO(modelPath: 'assets/coco_model.tflite', task: YOLOTask.detect, useGpu: false);
+        var path = _mdl.contains('VOC') ? 'assets/voc_model.tflite' : 'assets/coco_model.tflite';
+        _yoloInstance = YOLO(modelPath: path, task: YOLOTask.detect, useGpu: false);
         await _yoloInstance!.loadModel();
         _localReady = true;
       } catch (e) { setState(() => _useLocal = false); return; }
