@@ -8,6 +8,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:camera/camera.dart';
+import 'batch_page.dart';
+import '../utils/export_helper.dart';
+import '../utils/class_maps.dart';
 import '../models/detection_record.dart';
 import '../models/database.dart';
 
@@ -46,6 +49,21 @@ class _DetectPageState extends State<DetectPage> {
     if (f == null) return;
     var b = await f.readAsBytes();
     if (mounted) setState(() { _rawBytes = b; _dets = const []; _hasRun = false; _dbg = null; });
+  }
+
+  Future<void> _pickMulti() async {
+    if (_busy) return;
+    var files = await _picker.pickMultiImage(imageQuality: 85, limit: 9);
+    if (files.isEmpty) return;
+    if (!mounted) return;
+    await Navigator.push(context, MaterialPageRoute(
+      builder: (_) => BatchPage(
+        files: files,
+        serverUrl: _serverUrl,
+        conf: _conf,
+        isVoc: _mdl.contains('VOC'),
+      ),
+    ));
   }
 
   Future<void> _detect() async {
@@ -108,6 +126,81 @@ class _DetectPageState extends State<DetectPage> {
   }
 
   void _exitC() { _timer?.cancel(); setState(() { _camOn = false; _live = []; }); }
+
+  void _editClass(int idx) {
+    var d = _dets[idx];
+    var classes = getClassList(isVoc: _mdl.contains('VOC'));
+    var searchCtrl = TextEditingController();
+    showModalBottomSheet(context: context, isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setSheetState) {
+          var filtered = searchCtrl.text.isEmpty ? classes
+              : classes.where((c) => c.contains(searchCtrl.text)).toList();
+          return SizedBox(
+            height: MediaQuery.of(ctx).size.height * 0.7,
+            child: Column(children: [
+              Padding(padding: const EdgeInsets.fromLTRB(16, 12, 8, 0), child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [const Text('选择正确类别', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消'))]),
+              ),
+              Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), child: TextField(
+                controller: searchCtrl,
+                decoration: InputDecoration(hintText: '搜索类别...', prefixIcon: const Icon(Icons.search, size: 20),
+                  filled: true, fillColor: const Color(0xFFF5F7FA),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE8ECF1))),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+                onChanged: (_) => setSheetState(() {}),
+              )),
+              Expanded(child: ListView.builder(
+                itemCount: filtered.length,
+                itemBuilder: (_, i) {
+                  var cls = filtered[i];
+                  return ListTile(
+                    leading: Icon(cls == d.label ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                      color: cls == d.label ? Theme.of(ctx).colorScheme.primary : Colors.grey, size: 22),
+                    title: Text(cls, style: TextStyle(fontWeight: cls == d.label ? FontWeight.w600 : FontWeight.normal)),
+                    onTap: () { setState(() => d.label = cls); Navigator.pop(ctx); },
+                  );
+                },
+              )),
+            ]),
+          );
+        });
+      },
+    );
+  }
+
+  Future<void> _exportYolo() async {
+    if (_rawBytes == null || _dets.isEmpty) return;
+    var item = ExportItem(
+      name: DateTime.now().millisecondsSinceEpoch.toString(),
+      imageBytes: _rawBytes!,
+      imgW: _imgW,
+      imgH: _imgH,
+      targets: _dets.map((d) => ExportTarget(d.label, d.x1, d.y1, d.x2, d.y2)).toList(),
+    );
+    try {
+      var path = await exportSingleYolo(item, isVoc: _mdl.contains('VOC'));
+      if (mounted) setState(() => _dbg = '标注已保存');
+    } catch (e) {
+      if (mounted) setState(() => _dbg = '导出失败: $e');
+    }
+  }
+
+  Future<void> _shareYolo() async {
+    if (_rawBytes == null || _dets.isEmpty) return;
+    var item = ExportItem(
+      name: DateTime.now().millisecondsSinceEpoch.toString(),
+      imageBytes: _rawBytes!,
+      imgW: _imgW,
+      imgH: _imgH,
+      targets: _dets.map((d) => ExportTarget(d.label, d.x1, d.y1, d.x2, d.y2)).toList(),
+    );
+    try {
+      await shareAnnotation(item, isVoc: _mdl.contains('VOC'));
+    } catch (_) {}
+  }
 
   Future<List<_Det>> _send(Uint8List b) async {
     try {
@@ -191,11 +284,33 @@ class _DetectPageState extends State<DetectPage> {
                   if (i > 0) const Divider(height: 1),
                   ListTile(dense: true, leading: Container(width: 12, height: 12, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
                     title: Text(d.label, style: const TextStyle(fontSize: 14)),
-                    trailing: Text('${(d.score * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c))),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text('${(d.score * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: c)),
+                      const SizedBox(width: 4),
+                      InkWell(onTap: () => _editClass(i),
+                        child: Container(padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(6)),
+                          child: Icon(Icons.edit_outlined, size: 14, color: Colors.grey.shade600)),
+                      ),
+                    ])),
                 ]);
               }),
             ]),
           )),
+
+          if (has) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 0), child: Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: _dets.isEmpty ? null : () => _exportYolo(),
+              icon: const Icon(Icons.file_download_outlined, size: 16),
+              label: const Text('导出 YOLO'),
+              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10)))),
+            const SizedBox(width: 8),
+            Expanded(child: FilledButton.icon(
+              onPressed: _dets.isEmpty ? null : () => _shareYolo(),
+              icon: const Icon(Icons.share_outlined, size: 16),
+              label: const Text('分享标注'),
+              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10)))),
+          ])),
 
           _btnRow(has),
         ]),
@@ -227,6 +342,8 @@ class _DetectPageState extends State<DetectPage> {
       _obtn(Icons.camera_alt_outlined, '拍照', () => _pick(ImageSource.camera)),
       const SizedBox(width: 8),
       _obtn(Icons.videocam_outlined, '实时', _enterC),
+      const SizedBox(width: 8),
+      _obtn(Icons.photo_library, '批量', _pickMulti),
       const SizedBox(width: 8),
       Expanded(flex: 2, child: FilledButton.icon(
         onPressed: (has && !_busy) ? _detect : null, icon: const Icon(Icons.search, size: 18),
@@ -295,7 +412,7 @@ class _DetectPageState extends State<DetectPage> {
   }
 }
 
-class _Det { final double x1, y1, x2, y2, score; final String label;
+class _Det { final double x1, y1, x2, y2, score; String label;
   _Det(this.x1, this.y1, this.x2, this.y2, this.score, this.label); }
 
 class _BoxP extends CustomPainter {
