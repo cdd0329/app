@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img;
+import 'package:share_plus/share_plus.dart';
 import 'batch_page.dart';
 import '../utils/export_helper.dart';
 import '../utils/class_maps.dart';
@@ -46,25 +47,26 @@ class _DetectPageState extends State<DetectPage> {
 
   Future<void> _pick(ImageSource s) async {
     if (_busy) return;
+    if (s == ImageSource.gallery) {
+      // 相册：支持多选，1张走单图，多张走批量
+      var files = await _picker.pickMultiImage(imageQuality: 85, limit: 9);
+      if (files.isEmpty) return;
+      if (files.length == 1) {
+        var b = await files[0].readAsBytes();
+        if (mounted) setState(() { _rawBytes = b; _dets = const []; _hasRun = false; _dbg = null; });
+      } else {
+        if (!mounted) return;
+        await Navigator.push(context, MaterialPageRoute(
+          builder: (_) => BatchPage(files: files, serverUrl: _serverUrl, conf: _conf, isVoc: _mdl.contains('VOC')),
+        ));
+      }
+      return;
+    }
+    // 拍照：单张
     var f = await _picker.pickImage(source: s, imageQuality: 85);
     if (f == null) return;
     var b = await f.readAsBytes();
     if (mounted) setState(() { _rawBytes = b; _dets = const []; _hasRun = false; _dbg = null; });
-  }
-
-  Future<void> _pickMulti() async {
-    if (_busy) return;
-    var files = await _picker.pickMultiImage(imageQuality: 85, limit: 9);
-    if (files.isEmpty) return;
-    if (!mounted) return;
-    await Navigator.push(context, MaterialPageRoute(
-      builder: (_) => BatchPage(
-        files: files,
-        serverUrl: _serverUrl,
-        conf: _conf,
-        isVoc: _mdl.contains('VOC'),
-      ),
-    ));
   }
 
   Future<void> _detect() async {
@@ -195,35 +197,161 @@ class _DetectPageState extends State<DetectPage> {
     );
   }
 
-  Future<void> _exportYolo() async {
-    if (_rawBytes == null || _dets.isEmpty) return;
-    var item = ExportItem(
-      name: DateTime.now().millisecondsSinceEpoch.toString(),
-      imageBytes: _rawBytes!,
-      imgW: _imgW,
-      imgH: _imgH,
-      targets: _dets.map((d) => ExportTarget(d.label, d.x1, d.y1, d.x2, d.y2)).toList(),
-    );
-    try {
-      var path = await exportSingleYolo(item, isVoc: _mdl.contains('VOC'));
-      if (mounted) setState(() => _dbg = '标注已保存');
-    } catch (e) {
-      if (mounted) setState(() => _dbg = '导出失败: $e');
+  /// 在图片上绘制检测框，返回带框的图片字节
+  Uint8List _drawBoxes(Uint8List bytes) {
+    var image = img.decodeImage(bytes);
+    if (image == null) return bytes;
+    var cols = [
+      [255,0,0], [0,255,0], [0,0,255], [255,165,0],
+      [128,0,128], [0,128,128], [255,192,203], [75,0,130]
+    ];
+    for (int i = 0; i < _dets.length; i++) {
+      var d = _dets[i];
+      var c = cols[i % cols.length];
+      var x1 = (d.x1 * image.width / _imgW).round();
+      var y1 = (d.y1 * image.height / _imgH).round();
+      var x2 = (d.x2 * image.width / _imgW).round();
+      var y2 = (d.y2 * image.height / _imgH).round();
+      img.drawRect(image, x1: x1, y1: y1, x2: x2, y2: y2, color: img.ColorRgba8(c[0], c[1], c[2], 255), thickness: 3);
     }
+    return Uint8List.fromList(img.encodeJpg(image));
   }
 
-  Future<void> _shareYolo() async {
-    if (_rawBytes == null || _dets.isEmpty) return;
-    var item = ExportItem(
-      name: DateTime.now().millisecondsSinceEpoch.toString(),
-      imageBytes: _rawBytes!,
-      imgW: _imgW,
-      imgH: _imgH,
-      targets: _dets.map((d) => ExportTarget(d.label, d.x1, d.y1, d.x2, d.y2)).toList(),
+  /// 导出弹窗
+  void _showExportDialog(BuildContext ctx) {
+    if (_rawBytes == null) return;
+    showModalBottomSheet(
+      context: ctx,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx2) {
+        var isVoc = _mdl.contains('VOC');
+        var item = ExportItem(
+          name: DateTime.now().millisecondsSinceEpoch.toString(),
+          imageBytes: _rawBytes!,
+          imgW: _imgW, imgH: _imgH,
+          targets: _dets.map((d) => ExportTarget(d.label, d.x1, d.y1, d.x2, d.y2)).toList(),
+        );
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('📦 导出检测结果', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Text('选择导出格式', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+              const Divider(height: 20),
+
+              // 选项1：标注文件
+              _exportOption(
+                icon: '📄',
+                title: '标注文件 (YOLO .txt)',
+                desc: '类别ID + 归一化坐标，可用于模型训练',
+                onSave: () async {
+                  try {
+                    var p = await exportSingleYolo(item, isVoc: isVoc);
+                    if (ctx2.mounted) Navigator.pop(ctx2);
+                    if (mounted) setState(() => _dbg = '标注已保存');
+                  } catch (e) {
+                    if (mounted) setState(() => _dbg = '导出失败');
+                  }
+                },
+                onShare: () async {
+                  try { await shareAnnotation(item, isVoc: isVoc); } catch (_) {}
+                  if (ctx2.mounted) Navigator.pop(ctx2);
+                },
+              ),
+              const Divider(height: 4),
+
+              // 选项2：检测图片
+              _exportOption(
+                icon: '🖼️',
+                title: '检测图片 (带框)',
+                desc: '图片上绘制了边界框和标签',
+                onSave: () async {
+                  var boxed = _drawBoxes(_rawBytes!);
+                  try {
+                    var dir = await getApplicationDocumentsDirectory();
+                    var p = '${dir.path}/yolo_export/${item.name}_detected.jpg';
+                    await File(p).writeAsBytes(boxed);
+                    if (ctx2.mounted) Navigator.pop(ctx2);
+                    if (mounted) setState(() => _dbg = '图片已保存');
+                  } catch (e) {
+                    if (mounted) setState(() => _dbg = '保存失败');
+                  }
+                },
+                onShare: () async {
+                  var boxed = _drawBoxes(_rawBytes!);
+                  var dir = await getApplicationDocumentsDirectory();
+                  var p = '${dir.path}/yolo_export/${item.name}_detected.jpg';
+                  await File(p).writeAsBytes(boxed);
+                  await SharePlus.instance.share(ShareParams(
+                    files: [XFile(p)], fileNameOverrides: ['${item.name}_detected.jpg'],
+                  ));
+                  if (ctx2.mounted) Navigator.pop(ctx2);
+                },
+              ),
+              const Divider(height: 4),
+
+              // 选项3：打包 .zip
+              _exportOption(
+                icon: '📦',
+                title: '打包下载 (.zip)',
+                desc: '图片 + YOLO 标注 + 类别名，一个压缩包',
+                onSave: () async {
+                  try {
+                    var zip = await exportZip([item], isVoc: isVoc);
+                    if (ctx2.mounted) Navigator.pop(ctx2);
+                    if (mounted) setState(() => _dbg = '压缩包已保存');
+                  } catch (e) {
+                    if (mounted) setState(() => _dbg = '导出失败');
+                  }
+                },
+                onShare: () async {
+                  try {
+                    var zip = await exportZip([item], isVoc: isVoc);
+                    await shareZip(zip);
+                  } catch (_) {}
+                  if (ctx2.mounted) Navigator.pop(ctx2);
+                },
+              ),
+              const SizedBox(height: 8),
+            ]),
+          ),
+        );
+      },
     );
-    try {
-      await shareAnnotation(item, isVoc: _mdl.contains('VOC'));
-    } catch (_) {}
+  }
+
+  /// 导出选项行
+  Widget _exportOption({
+    required String icon, required String title, required String desc,
+    required VoidCallback onSave, required VoidCallback onShare,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(children: [
+        Text(icon, style: const TextStyle(fontSize: 24)),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          Text(desc, style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+        ])),
+        const SizedBox(width: 8),
+        _miniBtn(Icons.save_outlined, '保存', onSave),
+        const SizedBox(width: 4),
+        _miniBtn(Icons.share_outlined, '分享', onShare),
+      ]),
+    );
+  }
+
+  Widget _miniBtn(IconData icon, String label, VoidCallback onTap) {
+    return SizedBox(
+      height: 32,
+      child: OutlinedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 14), label: Text(label, style: const TextStyle(fontSize: 11)),
+        style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
+      ),
+    );
   }
 
   Future<List<_Det>> _send(Uint8List b) async {
@@ -322,19 +450,15 @@ class _DetectPageState extends State<DetectPage> {
             ]),
           )),
 
-          if (has) Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 0), child: Row(children: [
-            Expanded(child: OutlinedButton.icon(
-              onPressed: _dets.isEmpty ? null : () => _exportYolo(),
-              icon: const Icon(Icons.file_download_outlined, size: 16),
-              label: const Text('导出 YOLO'),
-              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10)))),
-            const SizedBox(width: 8),
-            Expanded(child: FilledButton.icon(
-              onPressed: _dets.isEmpty ? null : () => _shareYolo(),
-              icon: const Icon(Icons.share_outlined, size: 16),
-              label: const Text('分享标注'),
-              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10)))),
-          ])),
+          if (has)
+            Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 0), child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: (_dets.isEmpty && !_hasRun) ? null : () => _showExportDialog(context),
+                icon: const Icon(Icons.file_download_outlined, size: 16),
+                label: const Text('📦 导出检测结果'),
+                style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10))),
+            )),
 
           _btnRow(has),
         ]),
@@ -367,9 +491,7 @@ class _DetectPageState extends State<DetectPage> {
       const SizedBox(width: 8),
       _obtn(Icons.videocam_outlined, '实时', _enterC),
       const SizedBox(width: 8),
-      _obtn(Icons.photo_library, '批量', _pickMulti),
-      const SizedBox(width: 8),
-      Expanded(flex: 2, child: FilledButton.icon(
+      Expanded(child: FilledButton.icon(
         onPressed: (has && !_busy) ? _detect : null, icon: const Icon(Icons.search, size: 18),
         label: const Text('开始检测'), style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)))),
     ]));

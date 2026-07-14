@@ -192,24 +192,36 @@ class _BatchPageState extends State<BatchPage> {
       if (!_busy)
         Container(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-          child: Row(children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => _exportAll(context),
-                icon: const Icon(Icons.file_download_outlined, size: 18),
-                label: const Text('全部导出'),
-                style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+          child: Column(children: [
+            Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => _exportAll(context),
+                  icon: const Icon(Icons.file_download_outlined, size: 18),
+                  label: const Text('📤 全部导出'),
+                  style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: () => _uploadAll(context),
-                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                label: const Text('全部上传'),
-                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: () => _uploadAll(context),
+                  icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                  label: const Text('☁️ 全部上传'),
+                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
+                ),
               ),
-            ),
+            ]),
+            const SizedBox(height: 4),
+            Row(children: [
+              Expanded(child: Text('导出 YOLO .zip 标注（图片+标签）',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500))),
+              const SizedBox(width: 8),
+              Expanded(child: Text('上传标注到服务器，用于模型训练',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500))),
+            ]),
           ]),
         ),
     ]);
