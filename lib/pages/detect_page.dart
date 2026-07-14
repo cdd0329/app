@@ -514,16 +514,25 @@ class _DetectPageState extends State<DetectPage> {
     if (_camCtrl == null || !_camCtrl!.value.isInitialized) {
       return Scaffold(appBar: AppBar(title: const Text('实时检测')), body: const Center(child: CircularProgressIndicator()));
     }
+    var ps = _camCtrl!.value.previewSize;
+    var pw = ps?.width ?? _lW.toDouble();
+    var ph = ps?.height ?? _lH.toDouble();
     return Scaffold(
       appBar: AppBar(title: const Text('实时检测'), leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _exitC)),
-      body: Stack(children: [
-        Positioned.fill(child: CameraPreview(_camCtrl!)),
-        Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _CamBoxP(_live, _lW.toDouble(), _lH.toDouble())))),
-        Positioned(top: 12, left: 12, child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
-          child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
-      ]),
+      body: FittedBox(
+        fit: BoxFit.contain,
+        child: SizedBox(
+          width: pw, height: ph,
+          child: Stack(children: [
+            CameraPreview(_camCtrl!),
+            IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble()))),
+            Positioned(top: 12, left: 12, child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+              child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
+          ]),
+        ),
+      ),
     );
   }
 
@@ -624,29 +633,9 @@ class _BoxP extends CustomPainter {
       c.drawRect(r, Paint()..color=col..style=PaintingStyle.stroke..strokeWidth=2.5);
       var lb = '${d.label} ${(d.score*100).toStringAsFixed(0)}%';
       var tp = TextPainter(text: TextSpan(text: lb, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)), textDirection: TextDirection.ltr)..layout();
-      c.drawRect(Rect.fromLTWH(r.left, r.top-22, tp.width+8, 22), Paint()..color=col);
-      tp.paint(c, Offset(r.left+4, r.top-18));
-    }
-  }
-  @override bool shouldRepaint(covariant CustomPainter o) => true;
-}
-
-/// 实时画框 Painter：拉伸匹配 CameraPreview 的填充方式
-class _CamBoxP extends CustomPainter {
-  final List<_Det> dets; final double iW, iH;
-  _CamBoxP(this.dets, this.iW, this.iH);
-  @override void paint(Canvas c, Size s) {
-    if (iW <= 0 || iH <= 0) return;
-    var sx = s.width / iW, sy = s.height / iH;
-    var cs = [Colors.red,Colors.green,Colors.blue,Colors.orange,Colors.purple,Colors.teal,Colors.pink,Colors.indigo];
-    for (var i = 0; i < dets.length; i++) {
-      var d = dets[i]; var col = cs[i%cs.length];
-      var r = Rect.fromLTWH(d.x1*sx, d.y1*sy, (d.x2-d.x1)*sx, (d.y2-d.y1)*sy);
-      c.drawRect(r, Paint()..color=col..style=PaintingStyle.stroke..strokeWidth=2.5);
-      var lb = '${d.label} ${(d.score*100).toStringAsFixed(0)}%';
-      var tp = TextPainter(text: TextSpan(text: lb, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)), textDirection: TextDirection.ltr)..layout();
-      c.drawRect(Rect.fromLTWH(r.left, r.top-22, tp.width+8, 22), Paint()..color=col);
-      tp.paint(c, Offset(r.left+4, r.top-18));
+      // 标签画在框内左上角
+      c.drawRect(Rect.fromLTWH(r.left, r.top, tp.width+8, 22), Paint()..color=col);
+      tp.paint(c, Offset(r.left+4, r.top+2));
     }
   }
   @override bool shouldRepaint(covariant CustomPainter o) => true;

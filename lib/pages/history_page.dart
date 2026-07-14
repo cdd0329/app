@@ -242,8 +242,8 @@ class _HistBoxPaint extends CustomPainter {
       c.drawRect(r, Paint()..color=col..style=PaintingStyle.stroke..strokeWidth=2);
       final lb = '${o.className} ${(o.confidence*100).toStringAsFixed(0)}%';
       final tp = TextPainter(text: TextSpan(text: lb, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600)), textDirection: TextDirection.ltr)..layout();
-      c.drawRect(Rect.fromLTWH(r.left, r.top-20, tp.width+6, 20), Paint()..color=col);
-      tp.paint(c, Offset(r.left+3, r.top-16));
+      c.drawRect(Rect.fromLTWH(r.left, r.top, tp.width+6, 20), Paint()..color=col);
+      tp.paint(c, Offset(r.left+3, r.top+2));
     }
   }
   @override bool shouldRepaint(covariant CustomPainter o) => true;

@@ -688,8 +688,8 @@ class _BatchBoxPainter extends CustomPainter {
         text: TextSpan(text: lb, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
         textDirection: TextDirection.ltr,
       )..layout();
-      c.drawRect(Rect.fromLTWH(r.left, r.top - 22, tp.width + 8, 22), Paint()..color = col);
-      tp.paint(c, Offset(r.left + 4, r.top - 18));
+      c.drawRect(Rect.fromLTWH(r.left, r.top, tp.width + 8, 22), Paint()..color = col);
+      tp.paint(c, Offset(r.left + 4, r.top + 2));
     }
   }
 
