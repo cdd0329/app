@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+import 'package:camera/camera.dart';
 import '../models/detection_record.dart';
 import '../models/database.dart';
 
@@ -30,8 +31,14 @@ class _DetectPageState extends State<DetectPage> {
   double _br = 0, _ct = 0, _st = 1;
   String _mdl = 'COCO (80类)';
 
-  @override void initState() { super.initState(); }
-  @override void dispose() { super.dispose(); }
+  bool _camOn = false;
+  CameraController? _camCtrl;
+  List<_Det> _live = [];
+  Timer? _timer;
+  int _lW = 640, _lH = 480;
+
+  @override void initState() { super.initState(); _initC(); }
+  @override void dispose() { _timer?.cancel(); _camCtrl?.dispose(); super.dispose(); }
 
   Future<void> _pick(ImageSource s) async {
     if (_busy) return;
@@ -82,8 +89,49 @@ class _DetectPageState extends State<DetectPage> {
 
   void _resetE() { setState(() { _sc = 1; _cr = 1; _rt = 0; _br = 0; _ct = 0; _st = 1; }); }
 
+  Future<void> _initC() async {
+    try { final cs = await availableCameras(); if (cs.isNotEmpty) { _camCtrl = CameraController(cs.first, ResolutionPreset.medium); await _camCtrl!.initialize(); } } catch (_) {}
+  }
+
+  void _enterC() {
+    if (_camCtrl == null || !_camCtrl!.value.isInitialized) return;
+    setState(() => _camOn = true);
+    _timer = Timer.periodic(const Duration(milliseconds: 800), (_) async {
+      if (!_camOn || _camCtrl == null) return;
+      try {
+        final p = await _camCtrl!.takePicture();
+        final b = await p.readAsBytes();
+        final d = await _send(b);
+        if (mounted && _camOn) setState(() => _live = d);
+      } catch (_) {}
+    });
+  }
+
+  void _exitC() { _timer?.cancel(); setState(() { _camOn = false; _live = []; }); }
+
+  Future<List<_Det>> _send(Uint8List b) async {
+    try {
+      var u = Uri.parse('$_serverUrl/api/detect');
+      var r = http.MultipartRequest('POST', u);
+      r.fields['conf'] = _conf.toString();
+      r.fields['model'] = _mdl.contains('VOC') ? 'voc' : 'coco';
+      r.files.add(http.MultipartFile.fromBytes('file', b, filename: 'f.jpg'));
+      var resp = await http.Response.fromStream(await r.send()).timeout(const Duration(seconds: 3));
+      if (resp.statusCode != 200) return [];
+      var data = jsonDecode(resp.body);
+      _lW = (data['width'] as int?) ?? 640;
+      _lH = (data['height'] as int?) ?? 480;
+      return (data['objects'] as List?)?.map((o) {
+        var bb = o['bbox'] as List;
+        return _Det(bb[0].toDouble(), bb[1].toDouble(), bb[2].toDouble(), bb[3].toDouble(),
+            (o['confidence'] as num).toDouble(), o['class'] as String);
+      }).toList() ?? [];
+    } catch (_) { return []; }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_camOn) return _camView(context);
     var t = Theme.of(context); var has = _rawBytes != null;
     return Scaffold(
       appBar: AppBar(title: const Text('灵眸'), actions: [
@@ -155,11 +203,30 @@ class _DetectPageState extends State<DetectPage> {
     );
   }
 
+  Widget _camView(BuildContext ctx) {
+    if (_camCtrl == null || !_camCtrl!.value.isInitialized) {
+      return Scaffold(appBar: AppBar(title: const Text('实时检测')), body: const Center(child: CircularProgressIndicator()));
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('实时检测'), leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: _exitC)),
+      body: Stack(children: [
+        Positioned.fill(child: CameraPreview(_camCtrl!)),
+        Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_live, _lW.toDouble(), _lH.toDouble())))),
+        Positioned(top: 12, left: 12, child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(12)),
+          child: Text('${_live.length} 目标', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)))),
+      ]),
+    );
+  }
+
   Widget _btnRow(bool has) {
     return Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 16), child: Row(children: [
       _obtn(Icons.photo_library_outlined, '相册', () => _pick(ImageSource.gallery)),
       const SizedBox(width: 8),
       _obtn(Icons.camera_alt_outlined, '拍照', () => _pick(ImageSource.camera)),
+      const SizedBox(width: 8),
+      _obtn(Icons.videocam_outlined, '实时', _enterC),
       const SizedBox(width: 8),
       Expanded(flex: 2, child: FilledButton.icon(
         onPressed: (has && !_busy) ? _detect : null, icon: const Icon(Icons.search, size: 18),

@@ -22,7 +22,16 @@ shujiapp/lib/
     └── model_selector.dart       # 模型切换下拉
 ```
 
-**推理流程：** 相册/拍照 → 图片增强(实时 ColorFilter.matrix) → `POST /api/detect` → 服务器返回 `{objects: [{class, confidence, bbox}], width, height}` → CustomPainter 等比画框
+**推理流程：** 相册/拍照 → 图片增强(实时 ColorFilter.matrix + Transform，GPU运算零网络) → `POST /api/detect` → 服务器返回 `{objects: [{class, confidence, bbox}], width, height}` → CustomPainter 等比画框
+
+## 关键实现
+
+| 模块 | 文件 | 实现方式 |
+|------|------|---------|
+| 图像增强 | `detect_page.dart:_imgPrev()` | Flutter GPU `ColorFilter.matrix` + `Transform`，滑块拖动→setState→GPU重绘，**不经过网络** |
+| 单图检测 | `detect_page.dart:_detect()` | HTTP POST→服务器 ONNX Runtime，~1-3s |
+| 实时检测 | `detect_page.dart:_enterC()` | `camera` 包 CameraPreview + 800ms Timer 拍照→送检→画框 |
+| 本地TFLite | `assets/*.tflite` | 模型文件就绪但**代码未接入**，预留 `task: YOLOTask.detect` |
 
 ## 关键命令
 
@@ -44,6 +53,10 @@ flutter pub deps
 set HTTP_PROXY=http://127.0.0.1:7897 && set HTTPS_PROXY=http://127.0.0.1:7897 && flutter build apk --release
 ```
 
+## Git
+
+- `https://github.com/cdd0329/app` — 本仓库
+
 ## 环境要求
 
 - Flutter SDK 3.44.6 → `D:\software\Flutter\flutter`
@@ -52,12 +65,13 @@ set HTTP_PROXY=http://127.0.0.1:7897 && set HTTPS_PROXY=http://127.0.0.1:7897 &&
 
 ## 服务器依赖
 
-APP 通过 HTTP 调用服务器推理。服务器代码在 `E:\obj_detection\scripts\server_coco.py`（纯 Python HTTP Server + ONNX Runtime + YOLO11s）。
+APP 通过 HTTP 调用服务器推理。实际运行的是 `server_final.py`（FastAPI + ONNX Runtime + YOLO11s），位于 `/opt/`，始终运行在端口 8765。
 
 默认地址：`http://218.195.250.194:8765`
+训练监控：`http://218.195.250.194:8766`
 App 右上角 ⚙ 可修改地址。
 
-## 已知问题
+## 已知问题（详见 `E:\obj_detection\已知问题与待办.md`）
 
 | 问题 | 说明 |
 |------|------|
