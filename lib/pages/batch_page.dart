@@ -53,6 +53,8 @@ class _BatchPageState extends State<BatchPage> {
   late List<BatchImage> _items;
   int _done = 0;
   bool _busy = false;
+  bool _uploading = false;
+  bool _uploaded = false;
 
   bool _disposed = false;
 
@@ -198,16 +200,18 @@ class _BatchPageState extends State<BatchPage> {
                 child: OutlinedButton.icon(
                   onPressed: () => _exportAll(context),
                   icon: const Icon(Icons.file_download_outlined, size: 18),
-                  label: const Text('📤 全部导出'),
+                  label: const Text('全部导出'),
                   style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: () => _uploadAll(context),
-                  icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                  label: const Text('☁️ 全部上传'),
+                  onPressed: (_uploading || _uploaded) ? null : () => _uploadAll(context),
+                  icon: _uploading
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.cloud_upload_outlined, size: 18),
+                  label: Text(_uploaded ? '已上传' : (_uploading ? '上传中' : '全部上传')),
                   style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)),
                 ),
               ),
@@ -336,6 +340,7 @@ class _BatchPageState extends State<BatchPage> {
   }
 
   Future<void> _uploadAll(BuildContext ctx) async {
+    setState(() => _uploading = true);
     var host = Uri.parse(widget.serverUrl).host;
     var uploadUrl = 'http://$host:8767/api/annotations/upload';
     var ok = 0, fail = 0;
@@ -361,6 +366,7 @@ class _BatchPageState extends State<BatchPage> {
         if (resp.statusCode == 200) ok++; else fail++;
       } catch (_) { fail++; }
     }
+    if (mounted) setState(() { _uploading = false; _uploaded = fail == 0; });
     if (ctx.mounted) {
       ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('上传完成: $ok 成功, $fail 失败')));
     }

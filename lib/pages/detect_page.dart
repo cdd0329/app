@@ -35,6 +35,8 @@ class _DetectPageState extends State<DetectPage> {
   double _sc = 1, _cr = 1, _rt = 0;
   double _br = 0, _ct = 0, _st = 1;
   String _mdl = 'COCO (80类)';
+  bool _uploaded = false; // 是否已上传，防止重复
+  bool _uploading = false;
 
   bool _camOn = false;
   CameraController? _camCtrl;
@@ -106,7 +108,7 @@ class _DetectPageState extends State<DetectPage> {
           objects: list.map((b) => DetectedObject(className: b.label, confidence: b.score, bbox: [b.x1, b.y1, b.x2, b.y2])).toList(),
         ));
       } catch (_) {}
-      if (mounted) setState(() { _dets = list; _hasRun = true; _busy = false;
+      if (mounted) setState(() { _dets = list; _hasRun = true; _busy = false; _uploaded = false;
         _dbg = '${list.length}目标 ${sw.elapsedMilliseconds}ms'; });
     } catch (e) { if (mounted) setState(() { _busy = false; _dbg = '连接失败($e)'; }); }
   }
@@ -217,6 +219,36 @@ class _DetectPageState extends State<DetectPage> {
     return Uint8List.fromList(img.encodeJpg(image));
   }
 
+  /// 上传标注到服务器
+  Future<void> _uploadToServer(BuildContext ctx) async {
+    if (_rawBytes == null || _dets.isEmpty) return;
+    setState(() => _uploading = true);
+    try {
+      var host = Uri.parse(_serverUrl).host;
+      var url = 'http://$host:8767/api/annotations/upload';
+      var req = http.MultipartRequest('POST', Uri.parse(url));
+      var sendBytes = _applyTransform(_rawBytes!);
+      req.files.add(await http.MultipartFile.fromBytes('file', sendBytes, filename: 'img.jpg'));
+      var isVoc = _mdl.contains('VOC');
+      var map = isVoc ? VOC_MAP : COCO_MAP;
+      var lines = _dets.map((d) {
+        var clsId = map[d.label];
+        var xc = ((d.x1 + d.x2) / 2) / _imgW;
+        var yc = ((d.y1 + d.y2) / 2) / _imgH;
+        var w = (d.x2 - d.x1) / _imgW;
+        var h = (d.y2 - d.y1) / _imgH;
+        return '$clsId ${xc.toStringAsFixed(6)} ${yc.toStringAsFixed(6)} ${w.toStringAsFixed(6)} ${h.toStringAsFixed(6)}';
+      }).join('\n');
+      req.fields['label'] = lines;
+      req.fields['model'] = isVoc ? 'voc' : 'coco';
+      var resp = await http.Response.fromStream(await req.send()).timeout(const Duration(seconds: 10));
+      if (mounted) setState(() { _uploading = false; _uploaded = resp.statusCode == 200;
+        _dbg = resp.statusCode == 200 ? '上传成功' : '上传失败'; });
+    } catch (e) {
+      if (mounted) setState(() { _uploading = false; _dbg = '上传失败'; });
+    }
+  }
+
   /// 导出弹窗
   void _showExportDialog(BuildContext ctx) {
     if (_rawBytes == null) return;
@@ -235,14 +267,14 @@ class _DetectPageState extends State<DetectPage> {
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('📦 导出检测结果', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              const Text('导出检测结果', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               Text('选择导出格式', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
               const Divider(height: 20),
 
               // 选项1：标注文件
               _exportOption(
-                icon: '📄',
+                icon: Icons.description_outlined,
                 title: '标注文件 (YOLO .txt)',
                 desc: '类别ID + 归一化坐标，可用于模型训练',
                 onSave: () async {
@@ -263,7 +295,7 @@ class _DetectPageState extends State<DetectPage> {
 
               // 选项2：检测图片
               _exportOption(
-                icon: '🖼️',
+                icon: Icons.image_outlined,
                 title: '检测图片 (带框)',
                 desc: '图片上绘制了边界框和标签',
                 onSave: () async {
@@ -293,7 +325,7 @@ class _DetectPageState extends State<DetectPage> {
 
               // 选项3：打包 .zip
               _exportOption(
-                icon: '📦',
+                icon: Icons.folder_outlined,
                 title: '打包下载 (.zip)',
                 desc: '图片 + YOLO 标注 + 类别名，一个压缩包',
                 onSave: () async {
@@ -323,13 +355,13 @@ class _DetectPageState extends State<DetectPage> {
 
   /// 导出选项行
   Widget _exportOption({
-    required String icon, required String title, required String desc,
-    required VoidCallback onSave, required VoidCallback onShare,
+    required IconData icon, required String title, required String desc,
+    required VoidCallback onSave, VoidCallback? onShare,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(children: [
-        Text(icon, style: const TextStyle(fontSize: 24)),
+        Icon(icon, size: 22, color: Colors.grey.shade700),
         const SizedBox(width: 12),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
@@ -337,8 +369,7 @@ class _DetectPageState extends State<DetectPage> {
         ])),
         const SizedBox(width: 8),
         _miniBtn(Icons.save_outlined, '保存', onSave),
-        const SizedBox(width: 4),
-        _miniBtn(Icons.share_outlined, '分享', onShare),
+        if (onShare != null) ...[const SizedBox(width: 4), _miniBtn(Icons.share_outlined, '分享', onShare)],
       ]),
     );
   }
@@ -451,14 +482,27 @@ class _DetectPageState extends State<DetectPage> {
           )),
 
           if (has)
-            Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 0), child: SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
+            Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 0), child: Row(children: [
+              Expanded(child: OutlinedButton.icon(
                 onPressed: (_dets.isEmpty && !_hasRun) ? null : () => _showExportDialog(context),
                 icon: const Icon(Icons.file_download_outlined, size: 16),
-                label: const Text('📦 导出检测结果'),
-                style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10))),
-            )),
+                label: const Text('导出', style: TextStyle(fontSize: 13)),
+                style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10)))),
+              const SizedBox(width: 8),
+              Expanded(child: FilledButton.icon(
+                onPressed: (_dets.isEmpty || _uploaded) ? null : () => _uploadToServer(context),
+                icon: _uploading
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.cloud_upload_outlined, size: 16),
+                label: Text(_uploaded ? '已上传' : (_uploading ? '上传中' : '上传'), style: const TextStyle(fontSize: 13)),
+                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10)))),
+            ])),
+          if (has) Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
+            child: Text('点 ✏️ 修正类别后上传，用于模型增量训练',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+          ),
 
           _btnRow(has),
         ]),
@@ -492,14 +536,15 @@ class _DetectPageState extends State<DetectPage> {
       _obtn(Icons.videocam_outlined, '实时', _enterC),
       const SizedBox(width: 8),
       Expanded(child: FilledButton.icon(
-        onPressed: (has && !_busy) ? _detect : null, icon: const Icon(Icons.search, size: 18),
-        label: const Text('开始检测'), style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12)))),
+        onPressed: (has && !_busy) ? _detect : null, icon: const Icon(Icons.search, size: 16),
+        label: const Text('开始检测', style: TextStyle(fontSize: 13)),
+        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4)))),
     ]));
   }
 
   Widget _obtn(IconData icon, String label, VoidCallback cb) {
     return Expanded(child: OutlinedButton.icon(
-      onPressed: _busy ? null : cb, icon: Icon(icon, size: 18), label: Text(label),
+      onPressed: _busy ? null : cb, icon: Icon(icon, size: 16), label: Text(label, style: const TextStyle(fontSize: 13)),
       style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 12))));
   }
 
