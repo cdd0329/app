@@ -116,11 +116,6 @@ const Map<String, int> VOC_MAP = {
   "tvmonitor": 19,
 };
 
-/// 根据模型类别名获取 YOLO class_id
-int classNameToId(String name, {required bool isVoc}) {
-  return isVoc ? VOC_MAP[name]! : COCO_MAP[name]!;
-}
-
 /// 获取当前模型的类别列表（按 ID 排序）
 List<String> getClassList({required bool isVoc}) {
   final map = isVoc ? VOC_MAP : COCO_MAP;

@@ -76,13 +76,29 @@ class _DetectPageState extends State<DetectPage> {
   }
 
   Future<void> _toggleLocal(bool v) async {
-    if (v && !_localReady) {
+    var path = _mdl.contains('VOC') ? 'assets/voc_model.tflite' : 'assets/coco_model.tflite';
+    if (v) {
+      // 每次打开都重新加载，防止切换模型后用到旧实例
+      if (_yoloInstance != null) {
+        try { await _yoloInstance!.dispose(); } catch (_) {}
+        _yoloInstance = null;
+        _localReady = false;
+      }
+      setState(() => _dbg = '加载 $path ...');
       try {
-        var path = _mdl.contains('VOC') ? 'assets/voc_model.tflite' : 'assets/coco_model.tflite';
         _yoloInstance = YOLO(modelPath: path, task: YOLOTask.detect, useGpu: false);
-        await _yoloInstance!.loadModel();
+        setState(() => _dbg = 'YOLO 实例已创建，加载模型中...');
+        var ok = await _yoloInstance!.loadModel();
+        if (!ok) {
+          setState(() { _useLocal = false; _dbg = '本地: loadModel() 返回 false'; });
+          return;
+        }
         _localReady = true;
-      } catch (e) { setState(() => _useLocal = false); return; }
+        setState(() => _dbg = '本地模型就绪');
+      } catch (e) {
+        setState(() { _useLocal = false; _dbg = '本地: 加载异常 — $e'; });
+        return;
+      }
     }
     setState(() => _useLocal = v);
   }
@@ -124,34 +140,81 @@ class _DetectPageState extends State<DetectPage> {
           objects: list.map((b) => DetectedObject(className: b.label, confidence: b.score, bbox: [b.x1, b.y1, b.x2, b.y2])).toList(),
         ));
       } catch (_) {}
+      // 用变换后的图替换原始图，使预览与服务器看到的图一致
+      _rawBytes = sendBytes;
+      // 变换已应用到像素上，重置滑块
+      _rt = 0; _cr = 1.0; _sc = 1;
       if (mounted) setState(() { _dets = list; _hasRun = true; _busy = false; _uploaded = false;
         _dbg = '${list.length}目标 ${sw.elapsedMilliseconds}ms'; });
     } catch (e) { if (mounted) setState(() { _busy = false; _dbg = '连接失败($e)'; }); }
   }
 
   Future<void> _localDetect() async {
-    if (_rawBytes == null || _yoloInstance == null) return;
-    setState(() { _busy = true; _dbg = null; });
+    if (_rawBytes == null || _yoloInstance == null) {
+      setState(() => _dbg = '本地: rawBytes=${_rawBytes?.length}, yolo=${_yoloInstance != null}');
+      return;
+    }
+    setState(() { _busy = true; _dbg = '本地推理中... 图片${(_rawBytes!.length / 1024).round()}KB'; });
     var sw = Stopwatch()..start();
     try {
       var res = await _yoloInstance!.predict(_rawBytes!, confidenceThreshold: _conf);
       sw.stop();
+
+      // 诊断: dump 原始返回字段
+      var keys = res.keys.join(',');
+      var rawBoxes = (res['boxes'] as List?)?.length ?? 0;
       var dets = res['detections'] as List? ?? [];
+      var speed = res['speed'] as double? ?? 0;
+      var infMs = res['inferenceMs'] as double? ?? 0;
+
+      var isVoc = _mdl.contains('VOC');
+      var map = isVoc ? VOC_MAP : COCO_MAP;
+      var idToName = <int, String>{};
+      for (var e in map.entries) { idToName[e.value] = e.key; }
       var list = <_Det>[];
+      var fallbackCount = 0;
       for (var r in dets) {
         var m = r as Map;
         var bb = m['boundingBox'] as Map;
+        var clsName = m['className'] as String? ?? '';
+        if (clsName.startsWith('class ') || clsName.isEmpty) {
+          var rawIdx = m['classIndex'];
+          var idx = rawIdx is int ? rawIdx : (rawIdx is double ? rawIdx.toInt() : -1);
+          clsName = idToName[idx] ?? 'cls$idx';
+          fallbackCount++;
+        }
         list.add(_Det(
           (bb['left'] as num).toDouble(), (bb['top'] as num).toDouble(),
           (bb['right'] as num).toDouble(), (bb['bottom'] as num).toDouble(),
-          (m['confidence'] as num).toDouble(), m['className'] as String,
+          (m['confidence'] as num).toDouble(), clsName,
         ));
       }
+      // 诊断: 显示前3个的 classIndex→映射名，判模型/代码问题
+      var imgSize = res['imageSize'] as Map?;
+      var iw = (imgSize?['width'] as int?) ?? 0;
+      var ih = (imgSize?['height'] as int?) ?? 0;
+      if (iw > 0 && ih > 0) { _imgW = iw; _imgH = ih; }
+      var diag = '本地: ${list.length}目标 ${sw.elapsedMilliseconds}ms';
+      if (dets.isNotEmpty) {
+        var raw = <String>[];
+        for (var i = 0; i < dets.length && i < 3; i++) {
+          var dm = dets[i] as Map;
+          var ri = dm['classIndex'];
+          var idx = ri is int ? ri : (ri is double ? ri.toInt() : -1);
+          raw.add('$idx→${idToName[idx] ?? "?"}');
+        }
+        diag += ' | [$raw]';
+      }
+      if (dets.isEmpty) {
+        diag += ' | keys=[$keys] boxes=$rawBoxes';
+      }
+      if (fallbackCount > 0) diag += ' | 回退$fallbackCount';
       if (mounted) setState(() { _dets = list; _hasRun = true; _busy = false; _uploaded = false;
-        _imgW = 640; _imgH = 640;
-        _dbg = '${list.length}目标 ${sw.elapsedMilliseconds}ms (本地)'; });
+        _dbg = diag; });
     } catch (e) {
-      if (mounted) setState(() { _busy = false; _dbg = '本地推理失败: $e'; });
+      var detail = e.toString();
+      if (detail.length > 120) detail = '${detail.substring(0, 120)}...';
+      if (mounted) setState(() { _busy = false; _dbg = '本地: 推理异常 — $detail'; });
     }
   }
 
@@ -189,7 +252,7 @@ class _DetectPageState extends State<DetectPage> {
       try {
         final p = await _camCtrl!.takePicture();
         final b = await p.readAsBytes();
-        final d = await _send(b);
+        final d = _useLocal ? await _localSend(b) : await _send(b);
         if (mounted && _camOn) setState(() => _live = d);
       } catch (_) {}
     });
@@ -447,6 +510,36 @@ class _DetectPageState extends State<DetectPage> {
     } catch (_) { return []; }
   }
 
+  Future<List<_Det>> _localSend(Uint8List b) async {
+    if (_yoloInstance == null) return [];
+    try {
+      var res = await _yoloInstance!.predict(b, confidenceThreshold: _conf);
+      var dets = res['detections'] as List? ?? [];
+      var imgSize = res['imageSize'] as Map?;
+      _lW = (imgSize?['width'] as int?) ?? 640;
+      _lH = (imgSize?['height'] as int?) ?? 480;
+      var isVoc = _mdl.contains('VOC');
+      var map = isVoc ? VOC_MAP : COCO_MAP;
+      var idToName = <int, String>{};
+      for (var e in map.entries) { idToName[e.value] = e.key; }
+      var list = <_Det>[];
+      for (var r in dets) {
+        var m = r as Map;
+        var bb = m['boundingBox'] as Map;
+        var clsName = m['className'] as String? ?? '';
+        if (clsName.startsWith('class ') || clsName.isEmpty) {
+          clsName = idToName[m['classIndex'] as int? ?? 0] ?? 'unknown';
+        }
+        list.add(_Det(
+          (bb['left'] as num).toDouble(), (bb['top'] as num).toDouble(),
+          (bb['right'] as num).toDouble(), (bb['bottom'] as num).toDouble(),
+          (m['confidence'] as num).toDouble(), clsName,
+        ));
+      }
+      return list;
+    } catch (_) { return []; }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_camOn) return _camView(context);
@@ -642,7 +735,19 @@ class _DetectPageState extends State<DetectPage> {
   }
 
   Widget _mdlBtn() {
-    return PopupMenuButton<String>(onSelected: (v) => setState(() => _mdl = v), itemBuilder: (_) => const [
+    return PopupMenuButton<String>(onSelected: (v) async {
+      if (v == _mdl) return;
+      setState(() => _mdl = v);
+      // 本地已开时切换模型 → 必须重载
+      if (_useLocal) {
+        if (_yoloInstance != null) {
+          try { await _yoloInstance!.dispose(); } catch (_) {}
+          _yoloInstance = null;
+          _localReady = false;
+        }
+        await _toggleLocal(true);
+      }
+    }, itemBuilder: (_) => const [
       PopupMenuItem(value: 'COCO (80类)', child: Text('COCO (80类)')),
       PopupMenuItem(value: 'VOC (20类)', child: Text('VOC (20类)')),
     ], child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFBFDBFE))), child: Row(mainAxisSize: MainAxisSize.min, children: [
