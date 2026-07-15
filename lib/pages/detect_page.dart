@@ -33,7 +33,7 @@ class _DetectPageState extends State<DetectPage> {
   String? _dbg;
 
   bool _enh = false;
-  double _sc = 1, _cr = 1, _rt = 0;
+  double _sc = 1, _rt = 0;
   double _br = 0, _ct = 0, _st = 1;
   String _mdl = 'VOC (20类)';
   bool _useLocal = false;
@@ -55,7 +55,7 @@ class _DetectPageState extends State<DetectPage> {
     if (_busy) return;
     if (s == ImageSource.gallery) {
       // 相册：支持多选，1张走单图，多张走批量
-      var files = await _picker.pickMultiImage(imageQuality: 85, limit: 9);
+      var files = await _picker.pickMultiImage(imageQuality: 85);
       if (files.isEmpty) return;
       if (files.length == 1) {
         var b = await files[0].readAsBytes();
@@ -143,7 +143,7 @@ class _DetectPageState extends State<DetectPage> {
       // 用变换后的图替换原始图，使预览与服务器看到的图一致
       _rawBytes = sendBytes;
       // 变换已应用到像素上，重置滑块
-      _rt = 0; _cr = 1.0; _sc = 1;
+      _rt = 0; _sc = 1;
       if (mounted) setState(() { _dets = list; _hasRun = true; _busy = false; _uploaded = false;
         _dbg = '${list.length}目标 ${sw.elapsedMilliseconds}ms'; });
     } catch (e) { if (mounted) setState(() { _busy = false; _dbg = '连接失败($e)'; }); }
@@ -218,26 +218,36 @@ class _DetectPageState extends State<DetectPage> {
     }
   }
 
-  void _resetE() { setState(() { _sc = 1; _cr = 1; _rt = 0; _br = 0; _ct = 0; _st = 1; }); }
+  void _resetE() { setState(() { _sc = 1; _rt = 0; _br = 0; _ct = 0; _st = 1; }); }
 
-  /// 对原始图片应用旋转 + 裁剪变换，使发送到服务器的图与预览一致
+  /// 应用亮度/对比度/饱和度/旋转到图片像素上，再送去检测
   Uint8List _applyTransform(Uint8List bytes) {
-    if (_rt == 0 && _cr >= 1.0) return bytes;
-    var image = img.decodeImage(bytes);
-    if (image == null) return bytes;
+    var decoded = img.decodeImage(bytes);
+    if (decoded == null) return bytes;
+    var changed = false;
+
+    // 亮度/对比度/饱和度 — 逐像素修改
+    if (_br != 0 || _ct != 0 || _st != 1.0) {
+      for (final p in decoded) {
+        double r = p.r.toDouble(), g = p.g.toDouble(), b = p.b.toDouble();
+        r += _br * 255; g += _br * 255; b += _br * 255;
+        r = ((r - 128) * (_ct + 1) + 128).clamp(0, 255);
+        g = ((g - 128) * (_ct + 1) + 128).clamp(0, 255);
+        b = ((b - 128) * (_ct + 1) + 128).clamp(0, 255);
+        var gray = r * 0.299 + g * 0.587 + b * 0.114;
+        r = (gray + (r - gray) * _st).clamp(0, 255);
+        g = (gray + (g - gray) * _st).clamp(0, 255);
+        b = (gray + (b - gray) * _st).clamp(0, 255);
+        p.r = r.round(); p.g = g.round(); p.b = b.round();
+      }
+      changed = true;
+    }
+
     // 旋转
-    if (_rt != 0) {
-      image = img.copyRotate(image, angle: _rt.toInt());
-    }
-    // 中心裁剪
-    if (_cr < 1.0) {
-      var cw = (image.width * _cr).toInt();
-      var ch = (image.height * _cr).toInt();
-      var cx = ((image.width - cw) / 2).toInt();
-      var cy = ((image.height - ch) / 2).toInt();
-      image = img.copyCrop(image, x: cx, y: cy, width: cw, height: ch);
-    }
-    return Uint8List.fromList(img.encodeJpg(image));
+    if (_rt != 0) { decoded = img.copyRotate(decoded, angle: _rt.toInt()); changed = true; }
+
+    if (!changed) return bytes;
+    return Uint8List.fromList(img.encodeJpg(decoded));
   }
 
   Future<void> _initC() async {
@@ -565,7 +575,7 @@ class _DetectPageState extends State<DetectPage> {
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE8ECF1))),
                 child: ClipRRect(borderRadius: BorderRadius.circular(12), child: Stack(children: [
                   _imgPrev(),
-                  if (_dets.isNotEmpty) Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_dets, _imgW.toDouble(), _imgH.toDouble())))),
+                  if (_dets.isNotEmpty) Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _BoxP(_dets, _imgW.toDouble(), _imgH.toDouble(), _sc, _rt)))),
                 ])),
               ),
             )),
@@ -700,7 +710,6 @@ class _DetectPageState extends State<DetectPage> {
         if (_enh) ...[const Divider(height: 1),
           Padding(padding: const EdgeInsets.fromLTRB(14, 4, 14, 8), child: Column(children: [
             _sl('缩放', _sc, 0.5, 2, (v) => _sc = v, '${_sc.toStringAsFixed(1)}x'),
-            _sl('裁剪', _cr, 0.4, 1, (v) => _cr = v, '${(_cr*100).toInt()}%'),
             _sl('旋转', _rt, -45, 45, (v) => _rt = v, '${_rt.toInt()}°'),
             _sl('亮度', _br, -1, 1, (v) => _br = v, _br.toStringAsFixed(2)),
             _sl('对比度', _ct, -0.5, 0.5, (v) => _ct = v, _ct.toStringAsFixed(2)),
@@ -719,10 +728,6 @@ class _DetectPageState extends State<DetectPage> {
     var sM = <double>[0.3086+0.6914*_st,0.6094-0.6094*_st,0.0820-0.0820*_st,0,0, 0.3086-0.3086*_st,0.6094+0.3906*_st,0.0820-0.0820*_st,0,0, 0.3086-0.3086*_st,0.6094-0.6094*_st,0.0820+0.9180*_st,0,0, 0,0,0,1,0];
     img = ColorFiltered(colorFilter: ColorFilter.matrix(sM), child: img);
     img = ColorFiltered(colorFilter: ColorFilter.matrix(cM), child: img);
-    // 裁剪（视觉预览：中心缩放）
-    if (_cr < 1.0) {
-      img = ClipRect(child: Transform.scale(scale: 1.0 / _cr, alignment: Alignment.center, child: img));
-    }
     return Transform(alignment: Alignment.center, transform: Matrix4.identity()..setEntry(0,0,_sc)..setEntry(1,1,_sc)..setEntry(2,2,_sc)..rotateZ(_rt*math.pi/180), child: img);
   }
 
@@ -762,12 +767,20 @@ class _Det { final double x1, y1, x2, y2, score; String label;
   _Det(this.x1, this.y1, this.x2, this.y2, this.score, this.label); }
 
 class _BoxP extends CustomPainter {
-  final List<_Det> dets; final double iW, iH;
-  _BoxP(this.dets, this.iW, this.iH);
+  final List<_Det> dets; final double iW, iH; final double previewScale; final double rotation;
+  _BoxP(this.dets, this.iW, this.iH, [this.previewScale = 1.0, this.rotation = 0]);
   @override void paint(Canvas c, Size s) {
     if (iW <= 0 || iH <= 0) return;
-    var sx = s.width / iW, sy = s.height / iH, sc = sx < sy ? sx : sy;
+    var fit = (s.width / iW < s.height / iH ? s.width / iW : s.height / iH);
+    var sc = fit * previewScale;
     var ox = (s.width - iW * sc) / 2, oy = (s.height - iH * sc) / 2;
+    // 旋转框匹配旋转预览
+    if (rotation != 0) {
+      c.save();
+      c.translate(s.width / 2, s.height / 2);
+      c.rotate(rotation * math.pi / 180);
+      c.translate(-s.width / 2, -s.height / 2);
+    }
     var cs = [Colors.red,Colors.green,Colors.blue,Colors.orange,Colors.purple,Colors.teal,Colors.pink,Colors.indigo];
     for (var i = 0; i < dets.length; i++) {
       var d = dets[i]; var col = cs[i%cs.length];
@@ -779,6 +792,7 @@ class _BoxP extends CustomPainter {
       c.drawRect(Rect.fromLTWH(r.left, r.top, tp.width+8, 22), Paint()..color=col);
       tp.paint(c, Offset(r.left+4, r.top+2));
     }
+    if (rotation != 0) c.restore();
   }
-  @override bool shouldRepaint(covariant CustomPainter o) => true;
+  @override bool shouldRepaint(covariant _BoxP o) => o.dets != dets || o.iW != iW || o.iH != iH || o.previewScale != previewScale || o.rotation != rotation;
 }
